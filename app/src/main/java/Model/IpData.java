@@ -3,7 +3,7 @@ package Model;
     @author zhenglize
     IpModel包含的类
 */
-class IpData {
+public class IpData {
     private String country;
     private String country_id;
     private String area;
