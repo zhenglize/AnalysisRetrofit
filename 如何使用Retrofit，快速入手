@@ -1,0 +1,120 @@
+   什么是Retrofit？它用来干嘛？
+   Retrofit是Square公司开发的一款针对Android网络请求的框架，Retrofit底层是基于OkHttp实现的，它更多的使用
+运行时注解的方式来提供功能。
+
+    Retrofit的基本用法
+1.配置build.gradle
+    implementation 'com.squareup.retrofit2:retrofit:2.9.0'
+    implementation 'com.squareup.retrofit2:converter-gson:2.9.0'
+    添加Gradle依赖和对应的gson库依赖
+    在清单文件中添加网络权限
+2.Retrofit的注解
+    Retrofit的注解分为三大类，分别为HTTP请求方法注解、标记类方法注解和参数类注解。
+
+    HTTP请求方法注解有八种，分别为GET、POST、PUT、DELETE、HEAD、PATCH、OPTIONS和HTTP
+    其中前七种分别对应HTTP的请求方法，HTTP可以替换以上7种。
+
+    标记类注解有三种分别是:FormUrlEncoded、Multipart、Streaming
+    （Streaming代表数据以流的形式返回，如果不使用它默认会把数据全部加载到内存，所以下载大文件的时候需要使用它）
+
+    参数类注解有:Header、Headers、Body、Path、Field、FieldMap、Part、PartMap、Query和QueryMap
+
+    具体的用法看代码
+
+  Retrofit的源码分析
+
+●●●1.Retrofit的创建过程
+
+●当我们使用Retrofit发送网络请求时，需要写请求接口。例如
+        public interface IpService {
+                @GET("getIpInfo.php?ip=59.108.54.37")
+                Call<IpModel> getIpMsg();
+            }
+●调用如下的代码来构建Retrofit
+  Retrofit retrofit=new Retrofit.Builder()
+                .baseUrl(url)
+                //增加返回值为Json支持
+                .addConverterFactory(GsonConverterFactory.create())
+                .build();
+■问题1:源码中如何构建Retrofit?
+     是通过建造者模式来构架Retrofit的，下面是Builder中的源码
+       public Builder() {
+           this(Platform.get());
+         }
+       Platform作用是检查不同的平台，根据不同的运行平台来提供不同的线程池
+       接下来查看build()方法中的代码
+    public Retrofit build() {
+
+   ■1. 判断BaseUrl是否为空，baseUrl必须指定
+        if (baseUrl == null) {
+        throw new IllegalStateException("Base URL required.");
+      }
+
+    ■2. 我们调用callFactory传入的，默认为this.callFactory,如果没有传则直接穿件OkHttpClient对象
+      okhttp3.Call.Factory callFactory = this.callFactory;
+      if (callFactory == null) {
+        callFactory = new OkHttpClient();
+      }
+
+     ■3.将回调传递到UI线程
+      Executor callbackExecutor = this.callbackExecutor;
+      if (callbackExecutor == null) {
+        callbackExecutor = platform.defaultCallbackExecutor();
+      }
+
+      ■4.callAdapterFactories储存对call的转化对象
+      List<CallAdapter.Factory> callAdapterFactories = new ArrayList<>(this.callAdapterFactories);
+      callAdapterFactories.addAll(platform.defaultCallAdapterFactories(callbackExecutor));
+
+      ■5.储存转化数据的对象
+      // Make a defensive copy of the converters.
+      List<Converter.Factory> converterFactories =
+          new ArrayList<>(
+              1 + this.converterFactories.size() + platform.defaultConverterFactoriesSize());
+    }
+
+ ●●●2.Call的创建过程
+
+    ●使用Retrofit实例生成接口的动态代理
+    IpServiceForPath ipServiceForPath=retrofit.create(IpServiceForPath.class);
+
+    ●解析Retrofit的create方法的核心代码
+    return (T) Proxy.newProxyInstance(service.getClassLoader(), new Class<?>[] { service },
+        new InvocationHandler() {
+          @Override public Object invoke(Object proxy, Method method, Object... args)
+              throws Throwable {
+           ●ServiceMethod serviceMethod = loadServiceMethod(method);
+           ● OkHttpCall okHttpCall = new OkHttpCall<>(serviceMethod, args);
+           ●return serviceMethod.callAdapter.adapt(okHttpCall);
+             }
+    create方法返回了一个Proxy.newProxyInstance的动态代理对象。
+    实际上当我们调用接口中的方法的时候，调用的是InvocationHandler中的invoke()方法
+    该方法有三个参数，第一个参数是代理对象，第二个参数是接口中的方法，第三个是方法中的参数
+    ●ServiceMethod这一行的作用实际上就是对我们写的注解进行解析
+    ●okHttpCall就是进行一个赋值操作，将上面的解析的数据参数进行保存
+    ●adapt方法实际的作用是通过Handler的post方法，切换回UI线程
+
+●●●3.Call的enqueue方法
+   源码分析:本质上还是调用了okhttp的enqueue方法
+    call.enqueue(new okhttp3.callback());
+    接下来根据不同的返回码code做不同的操作，只有当返回码为200的时候才会进行后序的操作，否则报错。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
