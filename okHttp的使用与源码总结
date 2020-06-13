@@ -1,0 +1,225 @@
+OkHttp
+
+OkHttp 使用方法简介
+
+1. 创建一个 OkHttp 的实例
+OkHttpClient client = new OkHttpClient.Builder().build();
+
+2. 创建 Request
+Request request = new Request.Builder()
+                    .url("http://www.baidu.com")
+                    .build();
+
+3. 创建 Call 并发起网络请求
+client.newCall(request).enqueue(new Callback() {
+  @Override
+ public void onFailure(Call call, IOException e) {
+
+  }
+  @Override
+ public void onResponse(Call call, Response response) throws IOException
+{
+      Log.d("okhttp response", response.body().string());
+}
+});
+=======================================================================================================
+OkHttp 源码总结
+主线流程：
+OKHttpClient ---> Request --> newCall （实际执行的是它的实现类RealCall.enqueue()）{不能重复执行}
+---> Dispatcher.enqueue(AsyncCall) --->Dispatcher {if:先加入运行队列里面去 执行异步任务 else 直接加入等待队列}
+ --->异步任务 ---> AsyncCall execute{} --》责任链模式 多个拦截器 response -->用户接受到返回数据
+=======================================================================================================
+OkHttpClient 相当于配置中⼼，所有的请求都会共享这些配置（例如出错是否重试、共享的连接池）。
+OkHttpClient 中的配置主要有：
+
+Dispatcher dispatcher ：调度器，用于调度后台发起的网络请求，有后台总请求数和单主机总请求数的控制。
+
+List<Protocol> protocols ：支持的应用层协议，即 HTTP/1.1、HTTP/2 等。
+
+List<ConnectionSpec> connectionSpecs ：应用层支持的 Socket 设置，即使用明文传输（用于 HTTP）
+                                       还是某个版本的 TLS（用于 HTTPS）。
+
+List<Interceptor> interceptors ：大多数时候使用的 Interceptor 都应该配置到这里。
+
+List<Interceptor> networkInterceptors ：直接和网络请求交互的 Interceptor 配置到这里，例如如果你想查看返回的
+301报文或者未解压的 Response Body，需要在这⾥看。
+
+CookieJar cookieJar ：管理 Cookie 的控制器。OkHttp 提供了了 Cookie 存取的判断支持（即什么时候需要存 Cookie
+，什么时候需要读取 Cookie，但没有给出具体的存取实现。
+如果需要存取 Cookie，你得自己写实现，例如用  Map 存在内存里，或者⽤别的方式存在本地存储或者数据库。
+
+Cache cache ：Cache 存储的配置。默认是没有，如果需要用，得⾃己配置出 Cache 存储的文件位置以及存储空间上限。
+
+HostnameVerifier hostnameVerifier ：⽤用于验证 HTTPS 握手过程中下载到的证书所属者是否和自己要访问的主机名一致。
+
+CertificatePinner certificatePinner ：用于设置 HTTPS 握手过程中针对某个Host 的 Certificate Public Key Pinner，
+即把网站证书链中的每一个证书公钥直接拿来提前配置进 OkHttpClient ⾥去，以跳过本地根证书，直接从代码里进行行认证。
+这种用法比较少见，一般用于防⽌网站证书被人仿制。
+
+Authenticator authenticator ：⽤于自动重新认证。配置之后，在请求收到 401 状态码的响应是，会直接调用
+authenticator ，⼿动入  Authorization header 之后自动重新发起请求。
+
+boolean followRedirects ：遇到重定向的要求是，是否自动 follow。
+
+boolean followSslRedirects 在重定向时，如果原先请求的是 http 而重定向的目标是https，
+或者原先请求的是 https 而重定向的目标是 http，是否依然自动 follow。
+（记得，不是「是否自动 follow HTTPS URL 重定向的意思，而是否自动 follow 在 HTTP 和HTTPS 之间切换的重定向）
+
+boolean retryOnConnectionFailure ：在请求失败的时候是否自动重试。注意，大多数的请求失败并不属于
+ OkHttp 所定义的「需要重试」，这种重试只适用于「同一个域名的多个 IP 切换重试」「Socket 失效重试」等情况。
+
+int connectTimeout ：建立连接（TCP 或 TLS）的超时时间。
+
+int readTimeout ：发起请求到读到响应数据的超时时间。
+
+int writeTimeout ：发起请求并被目标服务器接受的超时时间。
+=======================================================================================================
+OKHttpClient ---构建者设计模式
+Request ---构建者设计模式
+设计模式的库中讲解了构造者模式，在okhttp中，使用静态内部类实现，当需要给client添加什么属性的时候，直接.url()等
+即可。在调用build()方式时，才去创建对象。
+=======================================================================================================
+newCall(Request) 方法会返回一个  RealCall 对象，它是  Call 接口的实现。当调用
+RealCall.execute() 的时候， RealCall.getResponseWithInterceptorChain() 会被
+调用，它会发起网络请求并拿到返回的响应，装进一个  Response 对象并作为返回值返回；
+RealCall.enqueue() 被调用的时候大同小异，区别在于 enqueue() 会使用  Dispatcher
+的线程池来把请求放在后台线程进行，但实质上使用的同样也是getResponseWithInterceptorChain() 方法。
+=======================================================================================================
+getResponseWithInterceptorChain() 方法做的事：把所有配置好的  Interceptor 放在一个  List 里，
+然后作为参数，创建一个  RealInterceptorChain 对象(相当于拦截器的管理类)，并调用
+chain.proceed(request) 来发起请求和获取响应。
+=======================================================================================================
+RealInterceptorChain
+在 RealInterceptorChain 中，多个Interceptor 会依次调用自己的 intercept() 方法。这个方法会做三件事：
+1. 对请求进行预处理
+2. 预处理之后，重新调用  RealIntercepterChain.proceed() 把请求交给下一个Interceptor
+3. 在下一个  Interceptor 处理完成并返回之后，拿到 Response 进⾏行行后续处理
+=======================================================================================================
+从上到下，每级 Interceptor 做的事：
+
+首先是开发者使用  addInterceptor(Interceptor) 所设置的，它们会按照开发者的要求，
+在所有其他 Interceptor 处理之前，进⾏行行最早的预处理工作，以及在收到Response 之后，
+做最后的善后工作。如果你有统一的 header 要添加，可以在这里设置；
+
+然后是  RetryAndFollowUpInterceptor ：它负责在请求失败时的重试，以及重定向的自动后续请求。
+它的存在，可以让重试和重定向对于开发者是无感知的；
+
+BridgeInterceptor ：它负责一些不影响开发者开发，但影响 HTTP 交互的一些额外预处理。
+例如，Content-Length 的计算和添加、gzip 的支持（Accept-Encoding: gzip）、gzip 压缩数据的解包，都是发生在这里；
+
+CacheInterceptor ：它负责 Cache 的处理。把它放在后面的网络交互相关Interceptor 的前面的好处是，
+如果本地有了可用的 Cache，一个请求可以在没有发生实质网络交互的情况下就返回缓存结果，
+而完全不需要开发者做出任何的额外工作，让Cache 更加无感知；
+
+ConnectInterceptor ：它负责建立连接。在这里，OkHttp 会创建出网络请求所需要的TCP 连接（如果是 HTTP），
+或者是建立在 TCP连接之上的 TLS 连接（如果是 HTTPS），并且会创建出对应的HttpCodec 对象（用于编码解码 HTTP 请求）
+
+然后是开发者使用 addNetworkInterceptor(Interceptor) 所设置的，它们的行为逻辑和使用 addInterceptor(Interceptor)
+创建的一样，但由于位置不同，所以这里创建的 Interceptor 会看到每个请求和响应的数据
+包括重定向以及重试的一些中间请求和响应），并且看到的是完整原始数据，而不是没有加 Content-Length 的请求数据，或者
+Body 还没有被 gzip 解压的响应数据。多数情况，这个方法不需要被使⽤；
+
+CallServerInterceptor ：它负责实质的请求与响应的 I/O 操作，即往 Socket 里写入请求数据，
+                        和从 Socket里读取响应数据。
+=======================================================================================================
+部分源代码
+// 异步方法
+RealCall.enqueue(new Callback()
+    不能执行大于1次 enqueue
+    synchronized (this) {
+      if (executed) throw new IllegalStateException("Already Executed");
+      executed = true;
+    }
+=======================================================================================================
+    拿到调度器dispatcher.enqueue方法，
+    client.dispatcher().enqueue(new AsyncCall(responseCallback));
+=======================================================================================================
+    -- 调用到 dispatcher的方法
+    synchronized void enqueue(AsyncCall call) {
+        if (runningAsyncCalls.size() < maxRequests && runningCallsForHost(call) < maxRequestsPerHost) {
+          runningAsyncCalls.add(call);
+          executorService().execute(call);
+        } else {
+          readyAsyncCalls.add(call);
+        }
+      }
+
+      Dispatcher {
+
+         等待执行队列
+         private final Deque<AsyncCall> readyAsyncCalls = new ArrayDeque<>();
+
+         运行的队列
+         private final Deque<AsyncCall> runningAsyncCalls = new ArrayDeque<>();
+
+         synchronized void enqueue(AsyncCall call) {
+
+      同时运行的异步任务小于64 && 同时访问(同一个)服务器 小于5个 ----》把运行的任务加入到 运行队列中 然后执行
+      if (runningAsyncCalls.size() < maxRequests && runningCallsForHost(call) < maxRequestsPerHost) {
+               runningAsyncCalls.add(call);
+               executorService().execute(call); // 执行
+             } else {
+               加入到等待队列
+               readyAsyncCalls.add(call);
+             }
+           }
+           Deque 双端队列：
+
+           AsyncCall 执行耗时任务
+            responseCallback true：这个错误是用户造成的，和OKHTTP没关系
+                              false：这个错误是OKHTTP造成的， onFailure
+      }
+================================================================================
+----> 分析OKHTTP里面的线程池
+executorService().execute(call);
+
+  public synchronized ExecutorService executorService() {
+    if (executorService == null) {
+      executorService = new ThreadPoolExecutor(0, Integer.MAX_VALUE, 60, TimeUnit.SECONDS,
+          new SynchronousQueue<Runnable>(), Util.threadFactory("OkHttp Dispatcher", false));
+    }
+    return executorService;
+  }
+分析结果：OKHTTP里面的线程池，采用的是缓存 方案
+OKHTTP里面的线程池：采用的是缓存 方案，+ 线程工厂 name  不是守护线程
+
+---> 总结：OKHTTP线程池采用的是缓存方案 + 定义线程工程（设置线程名，设置不是守护线程）
+缓存方案：参数1 == 0
+         参数2 Integer.Max
+         参数3/4：60s闲置时间 只要参数1 ,只要Runnable > 参数1 起作用(60s之内 就会复用之前的任务，
+         60s之后就会回收任务)
+
+=======================================================================================================
+最终返回结果 Response
+Response getResponseWithInterceptorChain() throws IOException {
+    // Build a full stack of interceptors.
+    List<Interceptor> interceptors = new ArrayList<>();
+    interceptors.addAll(client.interceptors());
+    interceptors.add(retryAndFollowUpInterceptor);
+    interceptors.add(new BridgeInterceptor(client.cookieJar()));
+    interceptors.add(new CacheInterceptor(client.internalCache()));
+    interceptors.add(new ConnectInterceptor(client));
+    if (!forWebSocket) {
+      interceptors.addAll(client.networkInterceptors());
+    }
+    interceptors.add(new CallServerInterceptor(forWebSocket));
+
+    Interceptor.Chain chain = new RealInterceptorChain(interceptors, null, null, null, 0,
+        originalRequest, this, eventListener, client.connectTimeoutMillis(),
+        client.readTimeoutMillis(), client.writeTimeoutMillis());
+    return chain.proceed(originalRequest);
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
